@@ -6,6 +6,7 @@
 - [Files](#files)  
 - [Protocol](#protocol)  
 - [Pinout](#pinout)  
+- [Firmware](#firmware)  
 
 ## Disclaimer
 
@@ -41,7 +42,8 @@ captured [SPI](https://sigrok.org/wiki/Protocol_decoder:Spi) data.
 
 The following files are contained within this repo:
 - [README.md](/README.md): this README  
-- [UNLICENSE](/UNLICENSE): the (UN)LICENSE
+- [UNLICENSE](/UNLICENSE): the (UN)LICENSE  
+- [kidde_cc1101.ino](/arduino/kidde_cc1101.ino): Arduino firmware tailored to ATmega328P  
 - [stm32_cc1101.ino](/stm32duino/stm32_cc1101.ino): example [STM32duino](https://github.com/stm32duino) 
 sketch implementing barebones receiver, with optional test mode to transmit  
 - [wink_cc1101_2020-03-07.sr](/pulseview/wink_cc1101_2020-03-07.sr): PulseView capture of PIC16F883 
@@ -119,3 +121,288 @@ lead.
 
 ![Wink Hub CC1101 pinout](/image/wink_cc1101_pic16f883_pinout.jpg?raw=true)
 
+## Firmware
+
+- [Background](#background)  
+- [Requirements](#requirements)  
+- [Configuring](#configuring)  
+- [Example commands](#example-commands)  
+- [Example output](#example-output)  
+- [Example Home Assistant configuration](#example-home-assistant-configuration)  
+
+### Background
+
+Two firmwares are included in this repo - [stm32_cc1101.ino](/stm32duino/stm32_cc1101.ino), which 
+is a more simple proof-of-concept that can both send and receive the Kidde protocol, and was not 
+intended for much beyond that, and [kidde_cc1101.ino](/arduino/kidde_cc1101.ino), which I created 
+so I could use my smoke detector with [Home Assistant](https://www.home-assistant.io/).
+
+[kidde_cc1101.ino](/arduino/kidde_cc1101.ino) was developed using a [RM1101-USB-232](https://www.ebay.com/itm/433Mhz-CC1101-USB-Wireless-RF-Transceiver-Module-10mW-USB-UART-MAX232-RS232/311565600262) 
+which unfortunately wasn't suitable in its stock form due to the SPI programming interface being 
+fused off, and because the CC1101 isn't wired up to the ATmega48PA using hardware SPI pins (no idea 
+why). So, I desoldered and replaced the ATmega48PA with an ATmega328P and added jumpers to connect 
+the hardware SPI interface to the CC1101. Not pretty, but it works. Some pics of the before/after 
+can be found [here](https://imgur.com/a/ixWAovH). Something like a [SIGNALduino](http://wiki.in-circuit.de/index.php5?title=SIGNALduino_Stick) 
+would be a better route to go, though they're relatively pricey.
+
+### Requirements
+
+[kidde_cc1101.ino](/arduino/kidde_cc1101.ino) should work on any ATmega board >= ATmega328P (given 
+RAM / flash requirements) as long as hardware SPI and GDO2 are connected to the CC1101 module. Note 
+that CC1101 operates at 3.3V so the ATmega should operate at 3.3V or have appropriate level 
+shifting.
+
+The following external libraries are used:
+- [ArduinoJson](https://arduinojson.org/)
+- [MemoryFree](https://github.com/McNeight/MemoryFree) (optional, for debug logging)
+
+[MiniCore](https://github.com/MCUdude/MiniCore) was originally chosen due to it supporting the 
+ATmega48, however it stuck even after swapping the chip for a ATmega328P. It allows easily 
+specifying things like the "non-standard" 8MHz crystal found on the RM1101-USB-232 and other 3.3V 
+boards as well as BOD fuse settings. However, the standard Arduino core will work as well, but 
+you might need to edit boards.txt and replace e.g. `uno.build.f_cpu=16000000L` with 
+`uno.build.f_cpu=8000000L` if your board is 8MHz.
+
+### Configuring
+
+Interaction with [kidde_cc1101.ino](/arduino/kidde_cc1101.ino) is via JSON sent over the UART. The 
+default settings are as follows:
+- log level of INFO (minimal non-alarm chatter)  
+- smoke detector address of 0b00000000 (factory dip switch settings, IIRC)  
+- alarm expiry of 10s (JSON expiry message is sent 10s after the last packet is rx'd from detector)  
+- 38400 baud (should work for both 8MHz and 16MHz boards)  
+
+A few compile-time defines are available:
+- `LOG_LEVEL` - if compiling without `DYNAMIC_LOG`, log-level is fixed at this  
+- `DYNAMIC_LOG` - allows changing log level at runtime, and subsequently stores **all** log messages in flash  
+- `MEMORY_USAGE` - at TRACE log-level, will output memory usage. Requires [MemoryFree](https://github.com/McNeight/MemoryFree) library  
+- `ADDRESS_MAX` - maximum number of monitored addresses. Each address requires ~96 bytes of RAM. Default is 4  
+- `CS`, `MOSI`, `MISO`, `SCLK`, `GDO0`, `GDO2`, `LED` - corresponding pins on ATmega. Note that there are separate sections depending on if MiniCore or standard Arduino is used  
+- `RM1101_USB_232`, `EN`, `ORIG_SCLK`, `ORIG_MOSI`, `ORIG_MISO` - only relevant if you're using a modified RM1101-USB-232. EN is the amplifier enable pin  
+- `SPISettings CC1101()` - if you want to use an SPI speed other than 1MHz  
+
+### Example commands
+
+Assuming that the connected ATmega's serial port is `/dev/ttyUSB0`:
+
+Change the baud to 500000:  
+`echo '{"type":"set","key":"baud","value":500000}' >> /dev/ttyUSB0`
+
+Change the baud to 115200:  
+`echo '{"type":"set","key":"baud","value":115200}' >> /dev/ttyUSB0`
+
+Monitor addresses 0x00, 0xAA, 0xCC, and 0xBB:  
+`echo '{"type":"set","key":"address","value":[0,170,204,187]}' >> /dev/ttyUSB0`
+
+Monitor address 0xFF:  
+`echo '{"type":"set","key":"address","value":[255]}' >> /dev/ttyUSB0`
+
+Set alarm expiry to 60s:  
+`echo '{"type":"set","key":"expiry","value":60}' >> /dev/ttyUSB0`
+
+Set alarm expiry to 5m:  
+`echo '{"type":"set","key":"expiry","value":300}' >> /dev/ttyUSB0`
+
+Enable promiscuous mode (note: this disables normal stateful alarm functionality):  
+`echo '{"type":"set","key":"promisc","value":true}' >> /dev/ttyUSB0`
+
+Disable promiscuous mode:  
+`echo '{"type":"set","key":"promisc","value":false}' >> /dev/ttyUSB0`
+
+Set log level to TRACE (requires compiling with `DYNAMIC_LOG`):  
+`echo '{"type":"set","key":"log_level","value":"trace"}' >> /dev/ttyUSB0`
+
+Clear EEPROM (requires reset to take effect):  
+`echo '{"type":"set","key":"clear"}' >> /dev/ttyUSB0`
+
+Reset ATmega:  
+`echo '{"type":"set","key":"reset"}' >> /dev/ttyUSB0`
+
+Recover from bad baud (or just reflash with `EEPROM_MAGIC` changed to something other than `{'k', 'i', 'd', 'd', 'e'}`):  
+```
+stty -F /dev/ttyUSB0 115200 # this should be the baud rate you set
+perl -MTime::HiRes -e '$|++; my $cmd = q|{"type":"set","key":"clear"}|; foreach my $byte (split("", $cmd)) { print $byte; Time::HiRes::sleep(0.05) } print "\n";' >> /dev/ttyUSB0`
+```
+Then cycle power.
+
+### Example output
+
+Board reset at INFO log level:
+```
+{"millis":0,"type":"log","level":"info","caller":"setup","msg":"setup"}
+{"address":[170],"expiry":10,"baud":500000,"promisc":false}
+{"millis":1007,"type":"log","level":"info","caller":"resetCC1101","msg":"reset took 2168 us"}
+{"type":"chip_info","status":15,"partnum":0,"version":20}
+{"millis":1013,"type":"log","level":"info","caller":"calibrateCC1101","msg":"calibration took 1072 us"}
+```
+
+Below are artificially generated alarms - the normal duration is 10s for a test, and indefinite for smoke/CO.
+
+Smoke detected and subsequent expiry:
+```
+{"millis":70160,"type":"alarm","address":170,"command":"smoke","min_rssi":4,"max_rssi":4,"duration":0,"count":1,"active":true}
+{"millis":98447,"type":"alarm","address":170,"command":"smoke","min_rssi":1,"max_rssi":252,"duration":17447,"count":10,"active":false}
+```
+
+CO detected and subsequent expiry:
+```
+{"millis":69158,"type":"alarm","address":170,"command":"co","min_rssi":3,"max_rssi":3,"duration":0,"count":1,"active":true}
+{"millis":81649,"type":"alarm","address":170,"command":"co","min_rssi":3,"max_rssi":4,"duration":2472,"count":2,"active":false}
+```
+
+Test detected and subsequent expiry:
+```
+{"millis":67289,"type":"alarm","address":170,"command":"test","min_rssi":4,"max_rssi":4,"duration":0,"count":1,"active":true}
+{"millis":91236,"type":"alarm","address":170,"command":"test","min_rssi":3,"max_rssi":4,"duration":13416,"count":11,"active":false}
+```
+
+Low battery detected and subsequent expiry:
+```
+{"millis":69361,"type":"alarm","address":170,"command":"battery","min_rssi":3,"max_rssi":3,"duration":0,"count":1,"active":true}
+{"millis":93300,"type":"alarm","address":170,"command":"battery","min_rssi":2,"max_rssi":4,"duration":13716,"count":5,"active":false}
+```
+
+Promiscuous mode:
+```
+{"millis":1455659,"type":"packet","command":"hush","address":187,"raw_command":129,"suffix":38655,"rssi":13,"crc":true,"lqi":4}
+{"millis":1455712,"type":"packet","command":"test","address":204,"raw_command":128,"suffix":38655,"rssi":13,"crc":true,"lqi":3}
+{"millis":1455769,"type":"packet","command":"unknown","address":0,"raw_command":136,"suffix":38655,"rssi":13,"crc":true,"lqi":2}
+{"millis":1455790,"type":"packet","command":"hush","address":204,"raw_command":129,"suffix":38655,"rssi":13,"crc":true,"lqi":4}
+{"millis":1455800,"type":"packet","command":"unknown","address":0,"raw_command":138,"suffix":38655,"rssi":13,"crc":true,"lqi":2}
+{"millis":1455822,"type":"packet","command":"battery","address":0,"raw_command":141,"suffix":38655,"rssi":13,"crc":true,"lqi":2}
+{"millis":1455953,"type":"packet","command":"unknown","address":204,"raw_command":139,"suffix":38655,"rssi":13,"crc":true,"lqi":2}
+{"millis":1455990,"type":"packet","command":"battery","address":170,"raw_command":141,"suffix":38655,"rssi":13,"crc":true,"lqi":2}
+{"millis":1456039,"type":"packet","command":"unknown","address":170,"raw_command":135,"suffix":38655,"rssi":13,"crc":true,"lqi":0}
+{"millis":1456105,"type":"packet","command":"battery","address":170,"raw_command":141,"suffix":38655,"rssi":12,"crc":true,"lqi":0}
+{"millis":1456144,"type":"packet","command":"smoke","address":204,"raw_command":131,"suffix":38655,"rssi":13,"crc":true,"lqi":1}
+```
+
+### Example Home Assistant configuration
+
+`configuration.yaml`:
+```
+...
+sensor: !include sensor.yaml
+binary_sensor: !include binary_sensor.yaml
+...
+```
+
+`sensor.yaml`:
+```
+- platform: serial
+  serial_port: /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+  baudrate: 500000
+  name: kidde serial
+```
+
+`binary_sensor.yaml`:
+```
+- platform: template
+  sensors:
+    kidde_battery:
+      friendly_name: kidde battery
+      value_template: >-
+        {% if state_attr('sensor.kidde_serial', 'command') == "battery" %}
+          {{ state_attr('sensor.kidde_serial', 'active') }}
+        {% else %}
+          {{ is_state('binary_sensor.kidde_battery', 'on') }}
+        {% endif %}
+      availability_template: >-
+        {% if not is_state('sensor.kidde_serial', 'unavailable') %}
+          true
+        {% endif %}
+
+    kidde_co:
+      friendly_name: kidde co
+      value_template: >-
+        {% if state_attr('sensor.kidde_serial', 'command') == "co" %}
+          {{ state_attr('sensor.kidde_serial', 'active') }}
+        {% else %}
+          {{ is_state('binary_sensor.kidde_co', 'on') }}
+        {% endif %}
+      availability_template: >-
+        {% if not is_state('sensor.kidde_serial', 'unavailable') %}
+          true
+        {% endif %}
+
+    kidde_hush:
+      friendly_name: kidde hush
+      value_template: >-
+        {% if state_attr('sensor.kidde_serial', 'command') == "hush" %}
+          {{ state_attr('sensor.kidde_serial', 'active') }}
+        {% else %}
+          {{ is_state('binary_sensor.kidde_hush', 'on') }}
+        {% endif %}
+      availability_template: >-
+        {% if not is_state('sensor.kidde_serial', 'unavailable') %}
+          true
+        {% endif %}
+
+    kidde_smoke:
+      friendly_name: kidde smoke
+      value_template: >-
+        {% if state_attr('sensor.kidde_serial', 'command') == "smoke" %}
+          {{ state_attr('sensor.kidde_serial', 'active') }}
+        {% else %}
+          {{ is_state('binary_sensor.kidde_smoke', 'on') }}
+        {% endif %}
+      availability_template: >-
+        {% if not is_state('sensor.kidde_serial', 'unavailable') %}
+          true
+        {% endif %}
+
+    kidde_test:
+      friendly_name: kidde test
+      value_template: >-
+        {% if state_attr('sensor.kidde_serial', 'command') == "test" %}
+          {{ state_attr('sensor.kidde_serial', 'active') }}
+        {% else %}
+          {{ is_state('binary_sensor.kidde_test', 'on') }}
+        {% endif %}
+      availability_template: >-
+        {% if not is_state('sensor.kidde_serial', 'unavailable') %}
+          true
+        {% endif %}
+
+    kidde_unknown:
+      friendly_name: kidde unknown
+      value_template: >-
+        {% if state_attr('sensor.kidde_serial', 'command') == "unknown" %}
+          {{ state_attr('sensor.kidde_serial', 'active') }}
+        {% else %}
+          {{ is_state('binary_sensor.kidde_unknown', 'on') }}
+        {% endif %}
+      availability_template: >-
+        {% if not is_state('sensor.kidde_serial', 'unavailable') %}
+          true
+        {% endif %}
+```
+
+If you have multiple detectors on different addresses (note - this will effectively disable the wireless interconnect between them), you could filter by address like so:
+```
+    kidde_smoke_garage:
+      friendly_name: kidde smoke (garage - 0x00)
+      value_template: >-
+        {% if state_attr('sensor.kidde_serial', 'command') == "smoke" and state_attr('sensor.kidde_serial', 'address') == 0 %}
+          {{ state_attr('sensor.kidde_serial', 'active') }}
+        {% else %}
+          {{ is_state('binary_sensor.kidde_smoke_garage', 'on') }}
+        {% endif %}
+      availability_template: >-
+        {% if not is_state('sensor.kidde_serial', 'unavailable') %}
+          true
+        {% endif %}
+
+    kidde_smoke_gazebo:
+      friendly_name: kidde smoke (gazebo - 0xAA)
+      value_template: >-
+        {% if state_attr('sensor.kidde_serial', 'command') == "smoke" and state_attr('sensor.kidde_serial', 'address') == 170 %}
+          {{ state_attr('sensor.kidde_serial', 'active') }}
+        {% else %}
+          {{ is_state('binary_sensor.kidde_smoke_gazebo', 'on') }}
+        {% endif %}
+      availability_template: >-
+        {% if not is_state('sensor.kidde_serial', 'unavailable') %}
+          true
+        {% endif %}
+```
