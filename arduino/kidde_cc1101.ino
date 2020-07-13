@@ -72,32 +72,10 @@ uint8_t s_max_packets; // derived based on baud
 
 // NOTE: pins below will likely need to be changed unless you're using a atmega328p swapped onto a RM1101-USB-232 like me :)
 
-// defaults for RM1101-USB-232
+// uncomment below for RM1101-USB-232
 //#define RM1101_USB_232
 
-// for standard arduino ide core
-#ifdef ARDUINO_AVR_UNO
-
-#define CS PD4
-#define MOSI PB3
-#define MISO PB4
-#define SCLK PB5
-#define GDO0 PD3
-#define GDO2 PC0
-#define LED PB0
-
-#ifdef RM1101_USB_232
-#define EN PC5
-#define ORIG_SCLK PC2
-#define ORIG_MOSI PC3
-#define ORIG_MISO PC1
-#endif
-
-#endif
-
-// for "minicore" arduino core
-#ifdef ARDUINO_AVR_ATmega328
-
+// for "minicore" arduino core - note the different pin naming convention
 #define CS PIN_PD4
 #define MOSI PIN_PB3
 #define MISO PIN_PB4
@@ -107,13 +85,31 @@ uint8_t s_max_packets; // derived based on baud
 #define LED PIN_PB0
 
 #ifdef RM1101_USB_232
+// only change these if you're using RM1101-USB-232
 #define EN PIN_PC5
 #define ORIG_SCLK PIN_PC2
 #define ORIG_MOSI PIN_PC3
 #define ORIG_MISO PIN_PC1
 #endif
 
+// equivalent pin definitions for standard arduino ide core
+/*
+#define CS 4
+#define MOSI 11
+#define MISO 12
+#define SCLK 12
+#define GDO0 3
+#define GDO2 A0
+#define LED 8
+
+#ifdef RM1101_USB_232
+// only change these if you're using RM1101-USB-232
+#define EN A5
+#define ORIG_SCLK A2
+#define ORIG_MOSI A3
+#define ORIG_MISO A1
 #endif
+*/
 
 SPISettings CC1101(1000000, MSBFIRST, SPI_MODE0);
 
@@ -1214,6 +1210,10 @@ bool setLogLevel(JsonVariantConst &json_log_level) {
 #endif
 
 void setup() {
+  // so watchdog behaves
+  MCUSR = 0;
+  wdt_disable();
+
   bool crcOk = eepromReadConfig();
 
   initSerial();
