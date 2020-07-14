@@ -4,13 +4,14 @@
 // port=/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
 // verbose=1
 
-#include <avr/wdt.h>
+#include <avr/interrupt.h>
 #include <avr/power.h>
+#include <avr/wdt.h>
 #include <util/crc16.h>
-#include <ArduinoJson.h>
-#include <SPI.h>
-#include <EEPROM.h>
 #include <stdarg.h>
+#include <ArduinoJson.h>
+#include <EEPROM.h>
+#include <SPI.h>
 
 // LOG_LEVEL can be one of ERROR, INFO, DEBUG, or TRACE
 // running with TRACE or even DEBUG will likely cause packet loss - not recommended outside of testing
@@ -347,6 +348,23 @@ void resetBoard() {
   wdt_enable(WDTO_1S);
   while (1);
 }
+
+#if FLASHEND <= 140000
+// requires optiboot 7+ to function properly
+void jumpBootloader() {
+  _start("jumpBootloader");
+
+  LOG(INFO, "jumping to bootloader");
+
+  _end;
+
+  // taken from https://github.com/Optiboot/optiboot/blob/20a79ce/optiboot/examples/test_reset/test_reset.ino
+  typedef void (*do_reboot_t)(void);
+  const do_reboot_t do_reboot = (do_reboot_t)((FLASHEND - 511) >> 1);
+  cli(); TCCR0A = TCCR1A = TCCR2A = 0; // make sure interrupts are off and timers are reset.
+  do_reboot();
+}
+#endif
 
 void setupPins() {
   _start("setupPins");
@@ -1052,6 +1070,11 @@ void setConfig(const JsonDocument& command) {
   else if (command["key"] == "reset") {
     resetBoard();
   }
+#if FLASHEND <= 140000
+  else if (command["key"] == "bootloader") {
+    jumpBootloader();
+  }
+#endif
   else {
     LOG(ERROR, "'key' unknown");
   }
