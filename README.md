@@ -218,6 +218,9 @@ Clear EEPROM (requires reset to take effect):
 Reset ATmega:  
 `echo '{"type":"set","key":"reset"}' >> /dev/ttyUSB0`
 
+Jump to bootloader (requires Optiboot >= 7):  
+`echo '{"type":"set","key":"bootloader"}' >> /dev/ttyUSB0`
+
 Recover from bad baud (or just reflash with `EEPROM_MAGIC` changed to something other than `{'k', 'i', 'd', 'd', 'e'}`):  
 ```
 stty -F /dev/ttyUSB0 115200 # this should be the baud rate you set
